@@ -1,25 +1,40 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true,
-});
+// Only create OpenAI client if API key is available
+let openai: OpenAI | null = null;
+
+function getOpenAIClient(): OpenAI {
+  if (!openai && import.meta.env.VITE_OPENAI_API_KEY) {
+    openai = new OpenAI({
+      apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+      dangerouslyAllowBrowser: true,
+    });
+  }
+  
+  if (!openai) {
+    throw new Error("OpenAI API key is not configured. Please add VITE_OPENAI_API_KEY to your .env file.");
+  }
+  
+  return openai;
+}
 
 export async function sendToCrushion(userInput: string, userId: string, threadId?: string) {
   try {
+    const client = getOpenAIClient();
+    
     // Create thread (first-time only)
     const thread = threadId
       ? { id: threadId }
-      : await openai.beta.threads.create();
+      : await client.beta.threads.create();
 
     // Add user message
-    await openai.beta.threads.messages.create(thread.id, {
+    await client.beta.threads.messages.create(thread.id, {
       role: "user",
       content: userInput,
     });
 
     // Run the assistant
-    const run = await openai.beta.threads.runs.create(thread.id, {
+    const run = await client.beta.threads.runs.create(thread.id, {
       assistant_id: "asst_msWO7BoslUd8ht1iyIvRmPdq", // Replace with your real Assistant ID
     });
 
@@ -31,7 +46,7 @@ export async function sendToCrushion(userInput: string, userId: string, threadId
     while (runStatus !== "completed" && attempts < maxAttempts) {
       await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
       
-      const check = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+      const check = await client.beta.threads.runs.retrieve(thread.id, run.id);
       runStatus = check.status;
       attempts++;
 
@@ -105,13 +120,13 @@ export async function sendToCrushion(userInput: string, userId: string, threadId
         }
 
         // Send the results back to GPT
-        await openai.beta.threads.runs.submitToolOutputs(thread.id, run.id, {
+        await client.beta.threads.runs.submitToolOutputs(thread.id, run.id, {
           tool_outputs: toolOutputs,
         });
       }
 
       if (runStatus === "failed") {
-        const failedRun = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+        const failedRun = await client.beta.threads.runs.retrieve(thread.id, run.id);
         console.error("Assistant run failed:", failedRun);
         throw new Error(`Assistant run failed: ${failedRun.last_error?.message || 'Unknown error'}`);
       }
@@ -122,7 +137,7 @@ export async function sendToCrushion(userInput: string, userId: string, threadId
     }
 
     // Get final response with detailed logging
-    const messages = await openai.beta.threads.messages.list(thread.id);
+    const messages = await client.beta.threads.messages.list(thread.id);
     
     console.log("=== FULL MESSAGES DEBUG ===");
     console.log("Total messages in thread:", messages.data.length);
